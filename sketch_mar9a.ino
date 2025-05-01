@@ -42,8 +42,8 @@ const int tempForecastPins[7] = {V6, V7, V8, V9, V10, V11, V12}; // Temperature 
 const int humidForecastPins[7] = {V13, V15, V16, V17, V18, V19, V2}; // Humidity forecast pins
 
 // Forecast data arrays (initial values)
-float tempForecasts[7] = {35.0, 44.0, 46.0, 12.0, 16.0, 14.0, 32.0}; // Example temperature forecasts
-float humidForecasts[7] = {36.0, 99.0, 95.0, 92.0, 41.0, 66.0, 25.0}; // Example humidity forecasts
+float tempForecasts[7] = {18.0, 22.0, 16.0, 22.0, 16.0, 12.0, 19.0}; // Example temperature forecasts
+float humidForecasts[7] = {52.0, 48.0, 45.0, 49.0, 50.0, 60.0, 61.0}; // Example humidity forecasts
 
 BlynkTimer timer; 
 
