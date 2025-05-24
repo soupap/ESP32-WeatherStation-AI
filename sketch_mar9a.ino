@@ -1,7 +1,7 @@
 #include <Blynk.h>
 
 // *** MAIN SETTINGS ***
-#define BLYNK_TEMPLATE_ID "TMPL2tMkbfjN_"
+#define BLYNK_TEMPLATE_ID "TMPL2lGVEsMe2"
 #define BLYNK_TEMPLATE_NAME "Weather Station"
 #define BLYNK_FIRMWARE_VERSION "0.1.0"
 #define BLYNK_PRINT Serial
