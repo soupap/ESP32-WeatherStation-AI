@@ -1,13 +1,5 @@
-#include <Blynk.h>
-
-// *** MAIN SETTINGS ***
-#define BLYNK_TEMPLATE_ID "TMPL2lGVEsMe2"
-#define BLYNK_TEMPLATE_NAME "Weather Station"
-#define BLYNK_FIRMWARE_VERSION "0.1.0"
-#define BLYNK_PRINT Serial
-#define APP_DEBUG
-
-#include <Arduino.h>
+#include <Firebase_ESP_Client.h>
+#include <ArduinoJson.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_Sensor.h>
@@ -15,82 +7,90 @@
 #include <DHT.h>
 #include "BlynkEdgent.h"
 
-// DHT sensor
+// Firebase credentials
+#define API_KEY "AIzaSyCfL8eMRMBAd1ouuRhvjsl96og7GJvLi2I"
+#define DATABASE_URL "https://weather1-5b636-default-rtdb.europe-west1.firebasedatabase.app/"
+#define USER_EMAIL "seifeddine.trabelsi@etudiant-isi.utm.tn"
+#define USER_PASSWORD "BOMba2002isi???"
+
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+bool firebaseReady = false;
+
+// Blynk settings
+#define BLYNK_TEMPLATE_ID "TMPL2lGVEsMe2"
+#define BLYNK_TEMPLATE_NAME "Weather Station"
+#define BLYNK_FIRMWARE_VERSION "0.1.0"
+#define BLYNK_PRINT Serial
+#define APP_DEBUG
+
+// DHT Sensor
 #define DHT_BLYNK_VPIN_TEMPERATURE V0
 #define DHT_BLYNK_VPIN_HUMIDITY V1
 #define DHTPIN 25
 #define DHTTYPE DHT21 
 DHT dht(DHTPIN, DHTTYPE);
 
-// BMP sensor
+// BMP Sensor
 #define BMP_BLYNK_VPIN_PRESSURE V4
 #define BMP_BLYNK_VPIN_ALTITUDE V3
-#define BMP_SCK  (18)
-#define BMP_MISO (19)
-#define BMP_MOSI (23)
-#define BMP_CS   (5)
+#define BMP_SCK 18
+#define BMP_MISO 19
+#define BMP_MOSI 23
+#define BMP_CS 5
+#define ALTITUDE_0 1013.25
 Adafruit_BMP280 bmp(BMP_CS, BMP_MOSI, BMP_MISO, BMP_SCK);
-#define ALTITUDE_0 (1013.25)
 
-// Forecast virtual pins
-const int tempForecastPins[7] = {V6, V7, V8, V9, V10, V11, V12};
+// Forecast pins
+const int tempForecastPins[7]  = {V6, V7, V8, V9, V10, V11, V12};
 const int humidForecastPins[7] = {V13, V15, V16, V17, V18, V19, V2};
 
-// Example forecast values
-float tempForecasts[7] = {18.0, 22.0, 16.0, 22.0, 16.0, 12.0, 19.0};
-float humidForecasts[7] = {52.0, 48.0, 45.0, 49.0, 50.0, 60.0, 61.0};
+// Forecast data cache
+float tempForecasts[7] = {0};
+float humidForecasts[7] = {0};
 
 BlynkTimer timer;
 
-// Sensor state
+// Sensor data cache
 float DHT_TEMPERATURE = 0;
 float DHT_HUMIDITY = 0;
 float BMP_PRESSURE = 0;
 float BMP_ALTITUDE = 0;
 
-// Ignored change thresholds (increased to reduce writes)
+// Ignore small changes
 float DHT_TEMPERATURE_IGNORED_DELTA = 0.5;
 float DHT_HUMIDITY_IGNORED_DELTA = 0.5;
 float BMP_PRESSURE_IGNORED_DELTA = 0.5;
 float BMP_ALTITUDE_IGNORED_DELTA = 1.0;
 
 void setupDht() {
-  Serial.println("DHT startup!");
+  Serial.println("Initializing DHT sensor...");
   dht.begin();
 }
 
 void setupBMP() {
-  Wire.begin();
   if (!bmp.begin(0x76)) {
-    Serial.println(F("Could not find a valid BMP280 sensor!"));
+    Serial.println("BMP280 not found!");
   } else {
     bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
                     Adafruit_BMP280::SAMPLING_X2,
                     Adafruit_BMP280::SAMPLING_X16,
                     Adafruit_BMP280::FILTER_X16,
                     Adafruit_BMP280::STANDBY_MS_500);
-    Serial.println(F("BMP280 initialized"));
+    Serial.println("BMP280 initialized");
   }
 }
 
 void sendDhtData() {
   Blynk.virtualWrite(DHT_BLYNK_VPIN_TEMPERATURE, DHT_TEMPERATURE);
   Blynk.virtualWrite(DHT_BLYNK_VPIN_HUMIDITY, DHT_HUMIDITY);
-  Serial.println("Sent DHT data to Blynk");
 }
 
 void sendBMPData() {
   Blynk.virtualWrite(BMP_BLYNK_VPIN_PRESSURE, BMP_PRESSURE);
   Blynk.virtualWrite(BMP_BLYNK_VPIN_ALTITUDE, BMP_ALTITUDE);
-  Serial.println("Sent BMP data to Blynk");
-}
-
-void sendForecastData() {
-  Serial.println("Sending forecast data");
-  for (int i = 0; i < 7; i++) {
-    Blynk.virtualWrite(tempForecastPins[i], tempForecasts[i]);
-    Blynk.virtualWrite(humidForecastPins[i], humidForecasts[i]);
-  }
 }
 
 void readAndSendDhtData() {
@@ -98,32 +98,26 @@ void readAndSendDhtData() {
   float temperature = dht.readTemperature();
 
   if (isnan(humidity) || isnan(temperature)) {
-    Serial.println("Failed to read from DHT");
+    Serial.println("DHT read error");
     return;
   }
 
-  float humidityDelta = abs(humidity - DHT_HUMIDITY);
-  float temperatureDelta = abs(temperature - DHT_TEMPERATURE);
-
-  if (humidityDelta > DHT_HUMIDITY_IGNORED_DELTA || temperatureDelta > DHT_TEMPERATURE_IGNORED_DELTA) {
+  if (abs(humidity - DHT_HUMIDITY) > DHT_HUMIDITY_IGNORED_DELTA || abs(temperature - DHT_TEMPERATURE) > DHT_TEMPERATURE_IGNORED_DELTA) {
     DHT_HUMIDITY = humidity;
     DHT_TEMPERATURE = temperature;
-    Serial.printf("Humidity: %.2f%%, Temp: %.2f°C\n", humidity, temperature);
+    Serial.printf("Humidity: %.1f%%, Temp: %.1f°C\n", humidity, temperature);
     sendDhtData();
   }
 }
 
 void readAndSendBMPData() {
-  float pressure = bmp.readPressure() / 100.0F;
+  float pressure = bmp.readPressure() / 100.0;
   float altitude = bmp.readAltitude(ALTITUDE_0);
 
-  float pressureDelta = abs(pressure - BMP_PRESSURE);
-  float altitudeDelta = abs(altitude - BMP_ALTITUDE);
-
-  if (pressureDelta > BMP_PRESSURE_IGNORED_DELTA || altitudeDelta > BMP_ALTITUDE_IGNORED_DELTA) {
+  if (abs(pressure - BMP_PRESSURE) > BMP_PRESSURE_IGNORED_DELTA || abs(altitude - BMP_ALTITUDE) > BMP_ALTITUDE_IGNORED_DELTA) {
     BMP_PRESSURE = pressure;
     BMP_ALTITUDE = altitude;
-    Serial.printf("Pressure: %.2f hPa, Altitude: %.2f m\n", pressure, altitude);
+    Serial.printf("Pressure: %.1f hPa, Altitude: %.1f m\n", pressure, altitude);
     sendBMPData();
   }
 }
@@ -131,22 +125,73 @@ void readAndSendBMPData() {
 void readAndSendAllSensorData() {
   readAndSendBMPData();
   readAndSendDhtData();
-  Serial.println("Completed sensor read cycle");
+}
+
+void fetchAndSendForecastFromFirebase() {
+  if (!firebaseReady) return;
+
+  if (Firebase.RTDB.getJSON(&fbdo, "/prediction")) {
+    Serial.println("Fetched forecast from Firebase");
+    DynamicJsonDocument doc(2048);
+    DeserializationError error = deserializeJson(doc, fbdo.to<FirebaseJson>().raw());
+    if (error) {
+      Serial.println("JSON parse failed");
+      return;
+    }
+
+    JsonArray tempArr = doc["temperature"];
+    JsonArray humidArr = doc["humidity"];
+
+    for (int i = 0; i < 7; i++) {
+      float t = tempArr[i] | 0.0;
+      float h = humidArr[i] | 0.0;
+
+      // Avoid unnecessary writes
+      if (t != tempForecasts[i]) {
+        tempForecasts[i] = t;
+        Blynk.virtualWrite(tempForecastPins[i], t);
+      }
+      if (h != humidForecasts[i]) {
+        humidForecasts[i] = h;
+        Blynk.virtualWrite(humidForecastPins[i], h);
+      }
+    }
+  } else {
+    Serial.print("Firebase error: ");
+    Serial.println(fbdo.errorReason());
+  }
+}
+
+void setupFirebase() {
+  config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
+  auth.user.email = USER_EMAIL;
+  auth.user.password = USER_PASSWORD;
+
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+
+  Serial.println("Connecting to Firebase...");
+  unsigned long timeout = millis();
+  while (!Firebase.ready() && millis() - timeout < 10000) {
+    delay(100);
+  }
+  firebaseReady = Firebase.ready();
+  Serial.println(firebaseReady ? "Firebase ready!" : "Firebase not ready.");
 }
 
 void setup() {
   Serial.begin(115200);
-  delay(100);
-
   BlynkEdgent.begin();
   setupDht();
   setupBMP();
+  setupFirebase();
 
-  // Update sensors every 15 seconds (was 5)
-  timer.setInterval(15000L, readAndSendAllSensorData);
+  // Every 30 seconds: read sensors
+  timer.setInterval(30000L, readAndSendAllSensorData);
 
-  // Send forecast data every 60 seconds
-  timer.setInterval(60000L, sendForecastData);
+  // Every 4 minutes: fetch forecast
+  timer.setInterval(240000L, fetchAndSendForecastFromFirebase);
 }
 
 void loop() {
